@@ -5,11 +5,9 @@
 
 #include <Arduino.h>
 
-// --- Board Detection & Dependencies ---
-#if defined(ARDUINO_M5Stack_Core_ESP32) || defined(ARDUINO_M5STACK_FIRE)
-  #include <M5Stack.h>
-  #define HAS_DISPLAY_M5
-#elif defined(ESP32)
+// --- Architecture Dependencies ---
+// Include standard/networking headers FIRST to avoid min/max macro conflicts
+#if defined(ESP32)
   #include <WiFi.h>
   #include <ESPAsyncWebServer.h>
   #include <analogWrite.h>
@@ -18,6 +16,14 @@
   #include <ESPAsyncWebServer.h>
   #include <ESPAsyncTCP.h>
 #endif
+
+// --- Board Detection ---
+#if defined(ARDUINO_M5Stack_Core_ESP32) || defined(ARDUINO_M5STACK_FIRE)
+  #include <M5Stack.h>
+  #define HAS_DISPLAY_M5
+#endif
+
+
 
 // --- Default Pin Mapping ---
 #if defined(HAS_DISPLAY_M5)
