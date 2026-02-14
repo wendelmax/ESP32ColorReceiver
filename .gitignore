@@ -1,0 +1,7 @@
+.pio
+.vscode
+*.orig
+*.pyc
+.DS_Store
+node_modules
+.env

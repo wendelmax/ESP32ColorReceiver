@@ -3,94 +3,128 @@
   Projeto em github.com/wendelmax/ESPColorReceiver  
 *********/
 
-// Load Wi-Fi library
-#include <heltec.h>
-#include <ESPAsyncWebServer.h>
 #include <Arduino.h>
-#include <analogWrite.h>
-String parmValor[3];
-bool chave = false;
-//Gerador de senhas
-String randomNumber = String(random(0,999999999),HEX);
-const char* password = randomNumber.c_str();
-//const char* password = "123456789";
-//nome da rede wi-fi
-const char* ssid = "ESP32ColorReceiver";
-// Defindo os pinos para RGB
-const int pinoR = 13;
-const int pinoG = 12;
-const int pinoB = 14;
-const int power = 17;
-// servidor web na porta 80
+
+// --- Board Detection & Dependencies ---
+#if defined(ARDUINO_M5Stack_Core_ESP32) || defined(ARDUINO_M5STACK_FIRE)
+  #include <M5Stack.h>
+  #define HAS_DISPLAY_M5
+#elif defined(ESP32)
+  #include <WiFi.h>
+  #include <ESPAsyncWebServer.h>
+  #include <analogWrite.h>
+#elif defined(ESP8266)
+  #include <ESP8266WiFi.h>
+  #include <ESPAsyncWebServer.h>
+  #include <ESPAsyncTCP.h>
+#endif
+
+// --- Default Pin Mapping ---
+#if defined(HAS_DISPLAY_M5)
+  const int pinoR = 2, pinoG = 5, pinoB = 13, power = 12; // Example M5Stack pins
+#else
+  const int pinoR = 13, pinoG = 12, pinoB = 14, power = 17; // Generic defaults
+#endif
+
+// --- Server & State ---
 AsyncWebServer server(80);
-//Variável para receber ip
-IPAddress IP;
-//método para exibir IP correto no display
-String ipToString(IPAddress ip){
-  String s="";
-  for (int i=0; i<4; i++)
-    s += i  ? "." + String(ip[i]) : String(ip[i]);
-  return s;
+int rVal = 0, gVal = 0, bVal = 0;
+bool powerState = false;
+unsigned long lastDisplayUpdate = 0;
+const unsigned long DISPLAY_INTERVAL = 1000;
+const char* ssid = "ESPColorReceiver";
+String apPassword;
+
+// --- Display Abstraction ---
+void initBoard() {
+#if defined(HAS_DISPLAY_M5)
+  M5.begin();
+  M5.Lcd.setTextSize(2);
+#else
+  Serial.begin(115200);
+#endif
 }
 
-void tela() {
-  Heltec.display->clear();
-  Heltec.display -> drawString(0, 3, "SSID: "+String(ssid));
-  Heltec.display -> drawString(0, 15, "Senha: " + String(password));
-  Heltec.display -> drawString(0, 27, "IP: "+String(ipToString(IP)));
-  Heltec.display -> drawString(0, 39, "MAC: "+String(WiFi.softAPmacAddress()));
-  Heltec.display -> drawString(0, 51, "Clientes: " +String(WiFi.softAPgetStationNum()));
-  Heltec.display -> display();
+void updateDisplay() {
+  String ip = WiFi.softAPIP().toString();
+  String clients = String(WiFi.softAPgetStationNum());
+
+#if defined(HAS_DISPLAY_M5)
+  M5.Lcd.fillScreen(BLACK);
+  M5.Lcd.setCursor(0, 0);
+  M5.Lcd.setTextColor(WHITE);
+  M5.Lcd.printf("SSID: %s\nPass: %s\nIP: %s\nClients: %s", ssid, apPassword.c_str(), ip.c_str(), clients.c_str());
+#else
+  static String lastIp;
+  if (lastIp != ip) {
+    Serial.println("AP IP: " + ip);
+    lastIp = ip;
+  }
+#endif
 }
 
 void setup() {
-  Serial.begin(115200);
-  //configuração inicial da placa
-  Heltec.begin(true /*DisplayEnable Enable*/, false /*LoRa Enable*/, true /*Serial Enable*/);
-//Configurando pinagem
-  pinMode(pinoR,OUTPUT);
-  pinMode(pinoG,OUTPUT);
-  pinMode(pinoB,OUTPUT);
-  pinMode(power,OUTPUT);
-  // Criando rede wi-fi
-  WiFi.softAP(ssid, password, 6, false, 8);
-  //WiFi.softAP(ssid);
-  delay(300);
-  //carregando ip na variavel
-  IP = WiFi.softAPIP();
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+  initBoard();
+  
+  randomSeed(analogRead(0));
+  apPassword = String(random(10000000, 99999999));
 
-    int paramsNr = request->params();
-    Serial.println(paramsNr);
- 
-    for(int i=0;i<paramsNr;i++){
-         
-        AsyncWebParameter* p = request->getParam(i);
-        Serial.print("Param name: ");
-        Serial.println(i);
-        Serial.print("Param name: ");
-        Serial.println(p->name());
-        Serial.print("Param value: ");
-        Serial.println(p->value());
-        Serial.println("------");
-        chave = true;
-    } 
-  request->send(200, "text/plain", "Recebido com Sucesso");
+  pinMode(pinoR, OUTPUT);
+  pinMode(pinoG, OUTPUT);
+  pinMode(pinoB, OUTPUT);
+  pinMode(power, OUTPUT);
+
+  WiFi.softAP(ssid, apPassword.c_str(), 6, false, 8);
+  
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    bool changed = false;
+    
+    // Suporte para r e R
+    if (request->hasParam("r")) { rVal = request->getParam("r")->value().toInt(); changed = true; }
+    else if (request->hasParam("R")) { rVal = request->getParam("R")->value().toInt(); changed = true; }
+    
+    // Suporte para g e G
+    if (request->hasParam("g")) { gVal = request->getParam("g")->value().toInt(); changed = true; }
+    else if (request->hasParam("G")) { gVal = request->getParam("G")->value().toInt(); changed = true; }
+    
+    // Suporte para b e B
+    if (request->hasParam("b")) { bVal = request->getParam("b")->value().toInt(); changed = true; }
+    else if (request->hasParam("B")) { bVal = request->getParam("B")->value().toInt(); changed = true; }
+    
+    powerState = changed;
+    request->send(200, "text/plain", "OK");
   });
-  tela(); 
+
+
   server.begin();
+  updateDisplay();
 }
 
-void loop(){
-  tela();
-    if (chave)
-    {
-    digitalWrite(power,HIGH);
-    digitalWrite(pinoR,parmValor[0].toInt());
-    digitalWrite(pinoG,parmValor[1].toInt());
-    digitalWrite(pinoB,parmValor[2].toInt());
-    }
-    else{
-    digitalWrite(power,LOW);
-    }
+void loop() {
+#if defined(HAS_DISPLAY_M5)
+  M5.update();
+#endif
+
+  if (millis() - lastDisplayUpdate >= DISPLAY_INTERVAL) {
+    updateDisplay();
+    lastDisplayUpdate = millis();
+  }
+
+  int outR = powerState ? rVal : 0;
+  int outG = powerState ? gVal : 0;
+  int outB = powerState ? bVal : 0;
+
+  digitalWrite(power, powerState ? HIGH : LOW);
+  
+#if defined(ESP8266)
+  analogWrite(pinoR, outR);
+  analogWrite(pinoG, outG);
+  analogWrite(pinoB, outB);
+#else
+  ::analogWrite(pinoR, outR);
+  ::analogWrite(pinoG, outG);
+  ::analogWrite(pinoB, outB);
+#endif
 }
+
+
